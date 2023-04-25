@@ -1,0 +1,463 @@
+---
+title: "Sketch Plotter"
+output: html_notebook
+---
+```{r}
+library(lme4)
+library(lmerTest)
+library(tidyverse)
+library(vegan)
+```
+
+```{r}
+library(png)
+get_raster_from_png<-function(f){
+  #Reads a PNG file for black-and-white line drawing
+  #Converts white to transparent and non-white to pure black
+  #Returns raster object that can be plotted with rasterImage
+  #
+  #f: File path and name to png
+  #
+  #Requires png package
+  ##############################################################
+  
+	tmp <- (readPNG(f,native=TRUE))*(-1) #Reads the png
+	v <- dim(tmp)[1] #Vertical dimension
+	h <- dim(tmp)[2] #horizontal dimension
+	o <- matrix(rgb(0,0,0,0), v,h) #Fully transparent raster matrix of same dimension
+	o[tmp != 1] <- rgb(0,0,0,1) #Opaque black values wherever original image is non-white
+	t(o) #return raster output
+}
+
+```
+
+```{r}
+plot_pics<-function (md, plist, x = 1, y = 2, pr = 0.6, pc = NA, psize = .05, newplot=T, y.lim=NA, x.lim=NA) 
+{
+#Given a matrix of data with rows = pictures and columns = MDS of picture vector
+#plot pictures in a 2D space.
+#md: Matrix of data with rows indicating items and columns indicating coordinates
+#plist: List of picture rasters to be plotted; length must be equal to number of rows in md
+#x: What column of md should be plotted on the horizontal axis
+#y: What column of md should be plotted on the vertical axis
+#pr: Which items to plot. If a single number between 0-1, will plot that proportion selected
+#    at random. Otherwise a vector of integers will plot the corresponding rows from md.
+#pc: Colors to plot each item. Can be specified as a single number or a vector providing plot
+#    color for each row of md.
+#psize: size of each image specified as proportion of plotting surface
+#newplot: Flag: should a new plot be created?
+#y.lim: ylim value for plot frame; if NA range in md will be used
+#x.lim: xlim value for plot frame; if NA range in md will be used
+##############################################################
+
+    nitems <- dim(md)[1] #Number of items
+	
+    if (nitems != length(plist)) #Check that picture list and plotting data have same number of items
+        stop("MDS matrix and picture list length don't match")
+		
+    if (length(pr)==1) sitems <- c(1:nitems)[runif(nitems) <= pr] else sitems <- pr #Select items to be plotted
+	
+    cflag <- !is.na(pc[1]) #Set plotting color if specified
+    if (cflag & length(pc) == 1) {
+        pc <- rep(pc, times = nitems)
+    }
+    else if (cflag & length(pc) != nitems) {
+        stop("Number of colors does note equal number of items")
+    }
+	#Set plotting axis ranges
+	if(is.na(y.lim)) y.lim <- range(md[,y]) * 1.1
+	if(is.na(x.lim)) x.lim <- range(md[,x]) * 1.1
+	if(!newplot){ #If this is not a new plot, set x and y limits to current plot frame values
+		x.lim <- par('usr')[1:2]
+		y.lim <- par('usr')[3:4]
+		}
+
+	#Set size of each image
+	xsz <- psize * (max(x.lim) - min(x.lim))
+	ysz <- psize * (max(y.lim) - min(y.lim))
+	
+	#Generate the plotting frame if it's a new plot
+    if(newplot){ 
+		plot(0, 0, type = "n", xlim = x.lim, ylim = y.lim, 
+        xlab = "", ylab = "")
+		}
+		
+	#Main plotting loop
+	for (i1 in c(sitems)) {
+		currpic <- plist[[i1]]
+		if (cflag) currpic[currpic == rgb(0, 0, 0,1)] <- pc[i1]
+
+		rasterImage(currpic, md[i1, x] - xsz, md[i1, y] - ysz, 
+			md[i1, x] + xsz, md[i1, y] + ysz)
+    }
+}
+
+
+```
+
+```{r}
+library(tidyverse)
+setwd('/Users/kushin/Documents/GitHub/triplets/code')
+sketch_vgg_df <- read.csv("../data/vgg_sketch_df.csv")
+sketch_alex_df <- read.csv("../data/alex_sketch_df.csv")
+sketch_resnet_df<- read.csv("../data/resnet_sketch_df.csv")
+sketch_vit_df<- read.csv("../data/vit_sketch_df.csv")
+sketch_vit_nc_df<- read.csv("../data/vit_nc_sketch_df.csv")
+
+sketch_dfs<-list(sketch_vgg_df,sketch_alex_df,sketch_resnet_df,sketch_vit_df,sketch_vit_nc_df)
+sketch_df_names<-c('vgg','alexnet','resnet','vitCLIP','vit')
+
+```
+
+```{r}
+for(model in 1:length(sketch_df_names)){
+this_df = sketch_dfs[[model]]
+plot_df<-this_df%>%select(sketch_id,embed_1,embed_2,pca1,pca2,pca3,category)
+
+f <- plot_df$sketch_id
+f_final<-paste('../data/sketches_rplot/',f,'.png',sep="")
+im <- list()
+
+clist<-c()
+for (i in 1:nrow(plot_df)){
+  if (plot_df$category[i]=='car'){
+    clist<-append(clist,'green')
+  }
+  else if (plot_df$category[i]=='chair'){
+    clist<-append(clist,'blue')
+  }
+  else if(plot_df$category[i]=='bird'){
+    clist<-append(clist,'red')
+  }
+  if (plot_df$category[i]=='dog'){
+    clist<-append(clist,'orange')
+  }
+}
+plot_df$color<-clist
+
+for(i in c(1:length(f_final))){
+	im[[i]] <- get_raster_from_png(f_final[i])
+	}
+
+
+pca_mat <- as.matrix(plot_df%>%select(pca1,pca2))
+pdf(paste0('../pca_',sketch_df_names[[model]],'_sketches.pdf'),w=8,h=8)
+plot_pics(pca_mat,im,pc=clist)
+title(paste0(sketch_df_names[[model]],' sketches'))
+dev.off()
+}
+
+embed_mat<-as.matrix(plot_df%>%select(embed_1,embed_2))
+
+pdf('../embed_sketches.pdf',w=8,h=8)
+plot_pics(embed_mat,im,pc=clist)
+title('Triplet Embeddings Sketches')
+dev.off()
+
+```
+
+```{r}
+flem_vgg_df <- read.csv("../data/vgg_flem_df.csv", header = T)
+flem_alex_df <- read.csv("../data/alex_flem_df.csv", header = T)
+flem_resnet_df<- read.csv("../data/resnet_flem_df.csv", header = T)
+flem_vit_df<- read.csv("../data/vit_flem_df.csv", header = T)
+flem_vit_nc_df<- read.csv("../data/vit_nc_flem_df.csv", header = T)
+
+flem_dfs<-list(flem_vgg_df,flem_alex_df,flem_resnet_df,flem_vit_df,flem_vit_nc_df)
+flem_df_names<-c('vgg','alexnet','resnet','vitCLIP','vit')
+
+```
+
+```{r}
+flem_vit_nc_df
+```
+
+
+```{r}
+for(model in 1:length(flem_dfs)){
+this_df = flem_dfs[[model]]
+plot_df<-this_df%>%select(sketch_id,embed_1,embed_2,pca1,pca2,pca3,category)
+
+f <- plot_df$sketch_id
+f_final<-paste('../data/fleming_rplot/',f,'.png',sep="")
+im <- list()
+
+clist<-c()
+for (i in 1:nrow(plot_df)){
+  if (plot_df$category[i]=='1'){
+    clist<-append(clist,'green')
+  }
+  else if (plot_df$category[i]=='2'){
+    clist<-append(clist,'blue')
+  }
+  else if(plot_df$category[i]=='3'){
+    clist<-append(clist,'red')
+  }
+  if (plot_df$category[i]=='4'){
+    clist<-append(clist,'orange')
+  }
+}
+plot_df$color<-clist
+
+for(i in c(1:length(f_final))){
+	im[[i]] <- get_raster_from_png(f_final[i])
+	}
+
+
+pca_mat <- as.matrix(plot_df%>%select(pca1,pca2))
+pdf(paste0('../pca_',flem_df_names[[model]],'_flem.pdf'),w=8,h=8)
+plot_pics(pca_mat,im,pc=clist)
+title(paste0(flem_df_names[[model]],' Fleming shapes'))
+dev.off()
+}
+
+embed_mat<-as.matrix(plot_df%>%select(embed_1,embed_2))
+
+pdf('../embed_flem.pdf',w=8,h=8)
+plot_pics(embed_mat,im,pc=clist)
+title('Triplet Embeddings Sketches')
+dev.off()
+```
+
+### Regressions
+
+
+```{r}
+model_list <- c('ViT_NC','ViT','ResNet','AlexNet','VGG')
+stim_type<-c('sketch','flem')
+
+
+a<-lm(next1~fft_low1+fft_low2+fft_low3 + fft_low1*fft_low2 + fft_low1*fft_low3 + fft_low2*fft_low3 + fft_low1*fft_low2*fft_low3,data=tmp) 
+b<-lm(next2~fft_low1+fft_low2+fft_low3 + fft_low1*fft_low2 + fft_low1*fft_low3 + fft_low2*fft_low3 + fft_low1*fft_low2*fft_low3,data=tmp) 
+
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+
+sketch_fftl_r<-protest(x,y)
+
+for(model in model_list){
+  tmp2<- read_csv(paste0('../data/',model,'_sketch.csv'),show_col_types = FALSE)
+  # preds <- colnames(tmp2)[3:5]
+  a<-lm(next1~vgg1+vgg2+vgg3 + vgg1*vgg2 + vgg1*vgg3 + vgg2*vgg3 + vgg1*vgg2*vgg3, data=tmp2)
+  b<-lm(next2~vgg1+vgg2+vgg3 + vgg1*vgg2 + vgg1*vgg3 + vgg2*vgg3 + vgg1*vgg2*vgg3, data=tmp2)
+  
+  x<-cbind(predict(a),predict(b))
+  y<-cbind(tmp2$next1, tmp2$next2)
+  
+  print(paste(model,protest(x,y)$t0^2))
+ 
+  
+  
+}
+
+print('------')
+
+for(model in model_list){
+  tmp2<- read_csv(paste0('../data/',model,'_flem.csv'),show_col_types = FALSE)
+  # preds <- colnames(tmp2)[3:5]
+  a<-lm(next1~vgg1+vgg2+vgg3 + vgg1*vgg2 + vgg1*vgg3 + vgg2*vgg3 + vgg1*vgg2*vgg3, data=tmp2)
+  b<-lm(next2~vgg1+vgg2+vgg3 + vgg1*vgg2 + vgg1*vgg3 + vgg2*vgg3 + vgg1*vgg2*vgg3, data=tmp2)
+  
+  x<-cbind(predict(a),predict(b))
+  y<-cbind(tmp2$next1, tmp2$next2)
+  
+  print(paste(model,protest(x,y)$t0^2))
+ 
+  
+  
+}
+
+
+
+```
+
+
+
+
+
+```{r}
+
+
+tmp<- read_csv('../data/ViT_NC_sketch.csv')
+
+a<-lm(next1~parts1+parts2+parts3 + parts1*parts2 + parts1*parts3 + parts2*parts3 + parts1*parts2*parts3,data=tmp) 
+b<-lm(next2~parts1+parts2+parts3 + parts1*parts2 + parts1*parts3 + parts2*parts3 + parts1*parts2*parts3,data=tmp) 
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+sketch_parts_r<-protest(x,y)
+
+
+a<-lm(next1~sm1+sm2+sm3 + sm1*sm2 + sm1*sm3 + sm2*sm3 + sm1*sm2*sm3,data=tmp) 
+b<-lm(next2~sm1+sm2+sm3 + sm1*sm2 + sm1*sm3 + sm2*sm3 + sm1*sm2*sm3,data=tmp) 
+
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+
+sketch_shape_r<-protest(x,y)
+
+
+a<-lm(next1~cat1+cat2+cat3 + cat1*cat2 + cat1*cat3 + cat2*cat3 + cat1*cat2*cat3,data=tmp) 
+b<-lm(next2~cat1+cat2+cat3 + cat1*cat2 + cat1*cat3 + cat2*cat3 + cat1*cat2*cat3,data=tmp) 
+
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+
+sketch_cat_r<-protest(x,y)
+
+
+
+a<-lm(next1~fft_high1+fft_high2+fft_high3 + fft_high1*fft_high2 + fft_high1*fft_high3 + fft_high2*fft_high3 + fft_high1*fft_high2*fft_high3,data=tmp) 
+b<-lm(next2~fft_high1+fft_high2+fft_high3 + fft_high1*fft_high2 + fft_high1*fft_high3 + fft_high2*fft_high3 + fft_high1*fft_high2*fft_high3,data=tmp) 
+
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+
+sketch_ffth_r<-protest(x,y)
+
+
+a<-lm(next1~fft_low1+fft_low2+fft_low3 + fft_low1*fft_low2 + fft_low1*fft_low3 + fft_low2*fft_low3 + fft_low1*fft_low2*fft_low3,data=tmp) 
+b<-lm(next2~fft_low1+fft_low2+fft_low3 + fft_low1*fft_low2 + fft_low1*fft_low3 + fft_low2*fft_low3 + fft_low1*fft_low2*fft_low3,data=tmp) 
+
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+
+sketch_fftl_r<-protest(x,y)
+
+sketch_non_nn<-data.frame(cbind(sketch_parts_r$t0,sketch_cat_r$t0, sketch_shape_r$t0,sketch_ffth_r$t0,sketch_fftl_r$t0))
+colnames(sketch_non_nn)<-c('parts','category','shape','fft_high','fft_low')
+
+sketch_non_nn
+
+
+
+
+
+
+
+sketch_sub_model1<- lm(next1~parts1+parts2+parts3+sm1+sm2+sm3+cat1+cat2+cat3+fft_high1+fft_high2+fft_high3+fft_low1+fft_low2+fft_low3,data=tmp)
+sketch_sub_model2<- lm(next2~parts1+parts2+parts3+sm1+sm2+sm3+cat1+cat2+cat3+fft_high1+fft_high2+fft_high3+fft_low1+fft_low2+fft_low3,data=tmp)
+
+
+
+sketch_model_comparisons1<- list()
+sketch_model_comparisons2<- list()
+
+
+for(model in model_list){
+  tmp2<- read_csv(paste0('../data/',model,'_sketch.csv'))
+  preds <- colnames(tmp2)[3:(ncol(tmp2)-3)]
+  sketch_full_model1<-lm(as.formula(paste0('next1','~',paste(preds, collapse='+'))), data=tmp2)
+  sketch_full_model2<-lm(as.formula(paste0('next2','~',paste(preds, collapse='+'))), data=tmp2)
+
+  model_comparison1<-anova(sketch_sub_model1,sketch_full_model1)
+  model_comparison2<-anova(sketch_sub_model2,sketch_full_model2)
+    
+  deltaR2_1<-summary(sketch_full_model1)$adj.r.squared-summary(sketch_sub_model1)$adj.r.squared
+  deltaR2_2<-summary(sketch_full_model2)$adj.r.squared-summary(sketch_sub_model2)$adj.r.squared
+
+  sketch_model_comparisons1<-rbind(sketch_model_comparisons1,cbind(model_comparison1$F[2],model_comparison1$`Pr(>F)`[2],deltaR2_1))
+  sketch_model_comparisons2<-rbind(sketch_model_comparisons2,cbind(model_comparison2$F[2],model_comparison2$`Pr(>F)`[2],deltaR2_2))
+
+  
+  
+}
+colnames(sketch_model_comparisons1)<-c('F-statistic','p','deltaR^2')
+colnames(sketch_model_comparisons2)<-c('F-statistic','p','deltaR^2')
+
+rownames(sketch_model_comparisons1)<-model_list
+rownames(sketch_model_comparisons2)<-model_list
+
+
+sketch_model_comparisons1
+sketch_model_comparisons2
+
+############
+
+tmp<- read_csv('../data/ViT_NC_flem.csv')
+
+
+
+a<-lm(next1~sm1+sm2+sm3 + sm1*sm2 + sm1*sm3 + sm2*sm3 + sm1*sm2*sm3,data=tmp) 
+b<-lm(next2~sm1+sm2+sm3 + sm1*sm2 + sm1*sm3 + sm2*sm3 + sm1*sm2*sm3,data=tmp) 
+
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+
+flem_shape_r<-protest(x,y)
+
+
+a<-lm(next1~fft_high1+fft_high2+fft_high3 + fft_high1*fft_high2 + fft_high1*fft_high3 + fft_high2*fft_high3 + fft_high1*fft_high2*fft_high3,data=tmp) 
+b<-lm(next2~fft_high1+fft_high2+fft_high3 + fft_high1*fft_high2 + fft_high1*fft_high3 + fft_high2*fft_high3 + fft_high1*fft_high2*fft_high3,data=tmp) 
+
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+
+flem_ffth_r<-protest(x,y)
+
+
+a<-lm(next1~fft_low1+fft_low2+fft_low3 + fft_low1*fft_low2 + fft_low1*fft_low3 + fft_low2*fft_low3 + fft_low1*fft_low2*fft_low3,data=tmp) 
+b<-lm(next2~fft_low1+fft_low2+fft_low3 + fft_low1*fft_low2 + fft_low1*fft_low3 + fft_low2*fft_low3 + fft_low1*fft_low2*fft_low3,data=tmp) 
+
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+
+flem_fftl_r<-protest(x,y)
+
+
+
+a<-lm(next1~overlap1+overlap2+overlap3 + overlap1*overlap2 + overlap1*overlap3 + overlap2*overlap3 + overlap1*overlap2*overlap3,data=tmp) 
+b<-lm(next2~overlap1+overlap2+overlap3 + overlap1*overlap2 + overlap1*overlap3 + overlap2*overlap3 + overlap1*overlap2*overlap3,data=tmp) 
+
+x<-cbind(predict(a),predict(b))
+y<-cbind(tmp$next1, tmp$next2)
+
+flem_overlap_r<-protest(x,y)
+
+flem_non_nn<-data.frame(cbind(flem_shape_r$t0,flem_ffth_r$t0,flem_fftl_r$t0,flem_overlap_r$t0))
+colnames(flem_non_nn)<-c('shape','fft_high','fft_low','overlap')
+
+flem_non_nn
+
+
+
+flem_sub_model1<- lm(next1~sm1+sm2+sm3+fft_high1+fft_high2+fft_high3+fft_low1+fft_low2+fft_low3+overlap1+overlap2+overlap3 ,data=tmp)
+
+flem_sub_model2<- lm(next2~sm1+sm2+sm3+fft_high1+fft_high2+fft_high3+fft_low1+fft_low2+fft_low3+overlap1+overlap2+overlap3,data=tmp)
+
+
+
+flem_model_comparisons1<- list()
+flem_model_comparisons2<- list()
+
+for(model in model_list){
+  tmp2<- read_csv(paste0('../data/',model,'_flem.csv'))
+  preds <- colnames(tmp2)[3:(ncol(tmp2)-3)]
+  flem_full_model1<-lm(as.formula(paste0('next1','~',paste(preds, collapse='+'))), data=tmp2)
+  flem_full_model2<-lm(as.formula(paste0('next2','~',paste(preds, collapse='+'))), data=tmp2)
+ 
+  model_comparison1<-anova(flem_sub_model1,flem_full_model1)
+  model_comparison2<-anova(flem_sub_model2,flem_full_model2)
+
+  deltaR2_1<-summary(flem_full_model1)$adj.r.squared-summary(flem_sub_model1)$adj.r.squared
+  deltaR2_2<-summary(flem_full_model2)$adj.r.squared-summary(flem_sub_model2)$adj.r.squared
+
+  
+  flem_model_comparisons1<-rbind(flem_model_comparisons1,cbind(model_comparison1$F[2],model_comparison1$`Pr(>F)`[2],deltaR2_1))
+  flem_model_comparisons2<-rbind(flem_model_comparisons2,cbind(model_comparison2$F[2],model_comparison2$`Pr(>F)`[2],deltaR2_2))
+ 
+  
+}
+colnames(flem_model_comparisons1)<-c('F-statistic','p','deltaR^2')
+colnames(flem_model_comparisons2)<-c('F-statistic','p','deltaR^2')
+
+rownames(flem_model_comparisons1)<-model_list
+rownames(flem_model_comparisons2)<-model_list
+
+
+flem_model_comparisons1
+flem_model_comparisons2
+
+
+
+```
+
